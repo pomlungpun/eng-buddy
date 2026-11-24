@@ -352,23 +352,25 @@ function speak(t,{slow=false,word=false}={}){
 }
 
 /* ---------- AI ---------- */
-function aiErr(e){const c=e&&e.code;return c==='rate_limited'?'AI ถูกใช้งานถี่เกินไป รอสักครู่แล้วลองใหม่':c==='not_granted'?'ยังไม่ได้อนุญาตให้หน้านี้ใช้ AI':c==='no_ai'?'ยังไม่มี AI ให้ใช้ ไปที่หน้า “ตั้งค่า AI” เพื่อเลือกผู้ให้บริการ':c==='api'?'API ตอบกลับผิดพลาด: '+String(e.message||'').slice(0,160):'AI ตอบกลับไม่สำเร็จ ลองใหม่อีกครั้ง'}
-const PROV={builtin:{n:'Claude ในแอปนี้ (ไม่ต้องใช้คีย์)'},openai:{n:'OpenAI (ChatGPT)',m:'gpt-4o-mini'},anthropic:{n:'Anthropic (Claude API)',m:'claude-haiku-5-5'},gemini:{n:'Google Gemini',m:'gemini-2.5-flash'},openrouter:{n:'OpenRouter (รวมหลายโมเดล)',m:'openai/gpt-4o-mini'},custom:{n:'OpenAI-compatible อื่นๆ (Groq, Together, Ollama ฯลฯ)',m:''}};
+function aiErr(e){const c=e&&e.code;return c==='rate_limited'?'AI ถูกใช้งานถี่เกินไป รอสักครู่แล้วลองใหม่':c==='not_granted'?'ยังไม่ได้อนุญาตให้หน้านี้ใช้ AI':c==='no_ai'?'ยังไม่มี AI ให้ใช้ ไปที่หน้า “ตั้งค่า AI” เพื่อเลือกผู้ให้บริการ':c==='api'&&(e.status===429||/quota|rate.?limit|RESOURCE_EXHAUSTED/i.test(e.message||''))?'ใช้โควตา AI เกินกำหนด (แบบฟรีจำกัดจำนวนครั้งต่อนาที/ต่อวัน) รอสักครู่แล้วลองใหม่ หรือเปลี่ยนเป็นโมเดลรุ่น lite ในหน้าตั้งค่า AI':c==='api'&&(e.status===503||/high demand|overload/i.test(e.message||''))?'ตอนนี้ผู้ให้บริการ AI มีคนใช้เยอะ ลองใหม่อีกครั้งในอีกสักครู่':c==='api'?'API ตอบกลับผิดพลาด: '+String(e.message||'').slice(0,160):'AI ตอบกลับไม่สำเร็จ ลองใหม่อีกครั้ง'}
+const PROV={builtin:{n:'Claude ในแอปนี้ (ไม่ต้องใช้คีย์)'},openai:{n:'OpenAI (ChatGPT)',m:'gpt-4o-mini'},anthropic:{n:'Anthropic (Claude API)',m:'claude-haiku-5-5'},gemini:{n:'Google Gemini',m:'gemini-flash-latest'},openrouter:{n:'OpenRouter (รวมหลายโมเดล)',m:'openai/gpt-4o-mini'},custom:{n:'OpenAI-compatible อื่นๆ (Groq, Together, Ollama ฯลฯ)',m:''}};
 const SANDBOX=!!(window.claude&&window.claude.use);
 let CFG={provider:'builtin',key:'',model:'',base:''};
 const extOn=()=>CFG.provider!=='builtin'&&(CFG.key||CFG.provider==='custom')&&!SANDBOX;
 const aiReady=()=>extOn()||!!AI;
 async function callProvider(c,prompt){
  const p=c.provider,model=c.model||PROV[p].m;let r,j;
- if(p==='anthropic'){r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':c.key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model,max_tokens:4000,messages:[{role:'user',content:prompt}]})});j=await r.json();if(!r.ok)throw{code:'api',message:(j.error&&j.error.message)||r.status};return (j.content||[]).map(x=>x.text||'').join('')}
- if(p==='gemini'){r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(c.key),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});j=await r.json();if(!r.ok)throw{code:'api',message:(j.error&&j.error.message)||r.status};return ((j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts)||[]).map(x=>x.text||'').join('')}
+ if(p==='anthropic'){r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':c.key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model,max_tokens:4000,messages:[{role:'user',content:prompt}]})});j=await r.json();if(!r.ok)throw{code:'api',status:r.status,message:(j.error&&j.error.message)||r.status};return (j.content||[]).map(x=>x.text||'').join('')}
+ if(p==='gemini'){r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(c.key),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});j=await r.json();if(!r.ok)throw{code:'api',status:r.status,message:(j.error&&j.error.message)||r.status};return ((j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts)||[]).map(x=>x.text||'').join('')}
  const base=(p==='openai'?'https://api.openai.com/v1':p==='openrouter'?'https://openrouter.ai/api/v1':(c.base||'')).replace(/\/+$/,'');
  if(!base)throw{code:'api',message:'ยังไม่ได้ใส่ Base URL'};
  const hd={'content-type':'application/json'};if(c.key)hd.authorization='Bearer '+c.key;
- r=await fetch(base+'/chat/completions',{method:'POST',headers:hd,body:JSON.stringify({model,messages:[{role:'user',content:prompt}]})});j=await r.json();if(!r.ok)throw{code:'api',message:(j.error&&(j.error.message||j.error))||r.status};return (j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||''
+ r=await fetch(base+'/chat/completions',{method:'POST',headers:hd,body:JSON.stringify({model,messages:[{role:'user',content:prompt}]})});j=await r.json();if(!r.ok)throw{code:'api',status:r.status,message:(j.error&&(j.error.message||j.error))||r.status};return (j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||''
 }
 async function ask(prompt,tier='default'){
- if(extOn()){try{return await callProvider(CFG,prompt)}catch(e){if(e&&e.code)throw e;throw{code:'api',message:String(e&&e.message||e)}}}
+ if(extOn()){for(let t=0;;t++){try{return await callProvider(CFG,prompt)}catch(e){const err=e&&e.code?e:{code:'api',message:String(e&&e.message||e)};
+  const busy=err.status===503||err.status===529||/high demand|overload|unavailable/i.test(err.message||'');
+  if(busy&&t<2){await new Promise(r=>setTimeout(r,t?8000:3000));continue}throw err}}}
  if(!AI)throw{code:'no_ai'};const r=await AI(prompt,{modelTier:tier});return r.text||''}
 async function askJSON(prompt,tier='default'){const t=await ask(prompt+'\n\nReply with ONLY one valid JSON object. No markdown, no code fences.',tier);const m=t.match(/\{[\s\S]*\}/);return JSON.parse(m?m[0]:t)}
 const aiNote=()=>aiReady()?'':'<div class="notice small" style="margin-top:10px">ยังไม่มี AI สำหรับตรวจ: เปิดหน้านี้ใน Claude แล้วกดอนุญาต หรือใส่ API key ของคุณเองในหน้า <a href="#settings">ตั้งค่า AI</a> ส่วนบทเรียนและแบบฝึกหัดอื่นใช้ได้เลย</div>';
@@ -381,9 +383,10 @@ function picHTML(v,cls=''){
  if(emo)return `<div class="pic ${cls}" aria-hidden="true">${esc(emo)}</div>`;
  const svg=store.get(imgKey(w),null);
  if(svg)return `<div class="pic ${cls}"><img alt="" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}"></div>`;
- return `<div class="pic ${cls}" data-pic="${esc(w)}"><div class="gen">${aiReady()?'<span class="spin"></span>':'🖼️'}</div></div>`;
+ return `<div class="pic ${cls}" data-pic="${esc(w)}"><div class="gen">${picsOn()?'<span class="spin"></span>':'🖼️'}</div></div>`;
 }
-function queuePics(){if(!aiReady())return;document.querySelectorAll('[data-pic]').forEach(el=>{const w=el.dataset.pic;if(!imgQ.includes(w))imgQ.push(w)});runPics()}
+const picsOn=()=>aiReady()&&(!extOn()||CFG.pics);
+function queuePics(){if(!picsOn())return;document.querySelectorAll('[data-pic]').forEach(el=>{const w=el.dataset.pic;if(!imgQ.includes(w))imgQ.push(w)});runPics()}
 async function runPics(){
  if(imgBusy||!imgQ.length)return;imgBusy=true;const w=imgQ.shift();const v=BYW.get(w);
  try{
@@ -392,7 +395,7 @@ async function runPics(){
   if(m&&!/<script|\son\w+=|<image|<foreignObject|href\s*=\s*["']?(?!#)/i.test(m[0])){store.set(imgKey(w),m[0]);document.querySelectorAll(`[data-pic="${CSS.escape(w)}"]`).forEach(el=>{el.removeAttribute('data-pic');el.innerHTML=`<img alt="" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(m[0])}">`})}
   else document.querySelectorAll(`[data-pic="${CSS.escape(w)}"] .gen`).forEach(el=>el.textContent='🖼️');
  }catch(e){document.querySelectorAll(`[data-pic="${CSS.escape(w)}"] .gen`).forEach(el=>el.textContent='🖼️');if(e&&e.code==='rate_limited'){imgQ.unshift(w);imgBusy=false;setTimeout(runPics,8000);return}}
- imgBusy=false;runPics();
+ imgBusy=false;if(extOn())setTimeout(runPics,6000);else runPics();
 }
 
 /* ---------- ui helpers ---------- */
@@ -767,6 +770,7 @@ V.settings=()=>{const c=CFG;return `<h1>ตั้งค่า AI</h1><p class="m
   <label class="small muted" for="ckey">API key</label><div class="pw"><input type="password" id="ckey" value="${esc(c.key)}" autocomplete="off" placeholder="วาง API key ที่นี่"><button class="icon" data-act="keyshow" aria-label="แสดงคีย์">👁</button></div>
   <label class="small muted" for="cmodel" style="display:block;margin-top:10px">ชื่อโมเดล</label><input type="text" id="cmodel" value="${esc(c.model)}" placeholder="${esc(PROV[c.provider].m||'เช่น llama-3.3-70b-versatile')}">
   ${c.provider==='custom'?`<label class="small muted" for="cbase" style="display:block;margin-top:10px">Base URL (OpenAI-compatible)</label><input type="text" id="cbase" value="${esc(c.base)}" placeholder="https://api.groq.com/openai/v1 หรือ http://localhost:11434/v1">`:''}
+  <label class="row" style="margin-top:12px;gap:8px;cursor:pointer"><input type="checkbox" id="cpics" ${c.pics?'checked':''} style="width:20px;height:20px"><span>ให้ AI วาดภาพคำศัพท์ที่ไม่มีอีโมจิ <span class="small muted">(ใช้โควตา AI เพิ่ม ปิดไว้ถ้าใช้คีย์ฟรี)</span></span></label>
   <p class="small muted" style="margin-top:10px">คีย์จะเก็บในเบราว์เซอร์เครื่องนี้เท่านั้น และส่งตรงไปยังผู้ให้บริการที่เลือก อย่าใส่คีย์บนคอมสาธารณะ และควรตั้งวงเงินการใช้งานไว้ที่หน้าเว็บผู้ให้บริการ ถ้าโมเดลเริ่มต้นใช้ไม่ได้ ให้ใส่ชื่อโมเดลที่บัญชีคุณใช้ได้</p>`}
   <div class="row" style="margin-top:12px"><button class="btn" data-act="cfgsave">บันทึก</button><button class="btn ghost" data-act="cfgtest">ทดสอบการเชื่อมต่อ</button></div><div id="cfgout" class="small" style="margin-top:8px"></div></div></div>
  ${ME&&!ME.cloud?`<div class="card" style="margin-top:16px"><h3>โปรไฟล์: ${esc(ME.name)}</h3><p class="small muted">ลบโปรไฟล์นี้และความคืบหน้าทั้งหมดออกจากเครื่องนี้ (กู้คืนไม่ได้ ยกเว้นคุณคัดลอกข้อมูลสำรองไว้)</p><button class="btn berry" data-act="pdel">ลบโปรไฟล์นี้</button></div>`:''}
@@ -911,7 +915,7 @@ Score on a 0-599 scale where 0-99 = Pre-A1, 100-199 = A1, 200-299 = A2, 300-399 
    clearInterval(TICK);ctx.test={kind:'result',which:'speaking'};view.innerHTML=testHTML();scrollTo(0,0)}catch(err){st.textContent=aiErr(err)}return}
  if(a==='prov'){CFG.provider=b.value;render();return}
  if(a==='keyshow'){const k=$('#ckey');k.type=k.type==='password'?'text':'password';return}
- if(a==='cfgsave'||a==='cfgtest'){if($('#ckey'))CFG.key=$('#ckey').value.trim();if($('#cmodel'))CFG.model=$('#cmodel').value.trim();if($('#cbase'))CFG.base=$('#cbase').value.trim();store.set(pk('ai'),CFG);
+ if(a==='cfgsave'||a==='cfgtest'){if($('#ckey'))CFG.key=$('#ckey').value.trim();if($('#cmodel'))CFG.model=$('#cmodel').value.trim();if($('#cbase'))CFG.base=$('#cbase').value.trim();if($('#cpics'))CFG.pics=$('#cpics').checked;store.set(pk('ai'),CFG);
   const o=$('#cfgout');if(a==='cfgsave'){o.textContent='บันทึกแล้ว';queuePics();return}
   if(SANDBOX&&CFG.provider!=='builtin'){o.textContent='ในหน้านี้ใช้ได้เฉพาะ Claude ในแอป (ดูหมายเหตุด้านบน)';return}
   o.innerHTML='<span class="spin"></span> กำลังทดสอบ…';try{const t=await ask('Reply with exactly: OK','quick');o.innerHTML='เชื่อมต่อสำเร็จ ✔ คำตอบ: '+esc(t.slice(0,40))}catch(err){o.textContent=aiErr(err)}return}
