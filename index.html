@@ -710,6 +710,16 @@ async function genPassage(kind,lv){
  else{p.lines=(r.lines||[]).map(l=>[['A','B','N'].includes(l.speaker)?l.speaker:'N',String(l.text||'')]).filter(l=>l[1]);if(!p.lines.length)throw{code:'api',message:'no lines'}}
  return p;
 }
+async function genPassages(kind){
+ const lv=['A2','B1','B2','C1'];
+ const r=kind==='reading'
+  ?await askJSON(`Write 4 original reading passages for an English placement test, one at each CEFR level A2, B1, B2, C1, each on a different fresh everyday or general-interest topic. Lengths: A2 110-140 words, B1 150-190, B2 190-230, C1 220-260. For each, 3 multiple-choice questions with 4 options (main idea, detail, inference or vocabulary in context). JSON: {"passages":[{"level":"A2","title":"...","text":"...","questions":[{"q":"...","options":["","","",""],"answer":0}]}]}`)
+  :await askJSON(`Write 4 original listening scripts for an English placement test, one at each CEFR level A2, B1, B2, C1, each in a different fresh situation. Each is either a natural dialogue between speakers A and B (6-10 turns) or a short talk/announcement by speaker N (A2 ~100 words, C1 ~220 words). For each, 3 multiple-choice questions with 4 options (1 gist, 2 detail or inference). JSON: {"passages":[{"level":"A2","title":"...","lines":[{"speaker":"A|B|N","text":"..."}],"questions":[{"q":"...","options":["","","",""],"answer":0}]}]}`);
+ const out=[];(r.passages||[]).forEach(x=>{try{if(!LVI[x.level])return;const qs=(x.questions||[]).filter(okQ).slice(0,3).map(q=>{const [o,a]=shuf4(q.options,+q.answer);return [String(q.q),o,a]});if(qs.length<3)return;const p={level:x.level,title:String(x.title||'Untitled'),qs,ai:true};
+  if(kind==='reading'){p.text=String(x.text||'');if(p.text.length<200)return}else{p.lines=(x.lines||[]).map(l=>[['A','B','N'].includes(l.speaker)?l.speaker:'N',String(l.text||'')]).filter(l=>l[1]);if(!p.lines.length)return}out.push(p)}catch(e){}});
+ lv.forEach(l=>{if(!out.some(p=>p.level===l)){const b=(kind==='reading'?READINGS:LISTENING).find(p=>p.level===l);if(b)out.push(b)}});
+ return out;
+}
 async function genWriting(){
  const r=await askJSON(`Create a fresh English writing test for a CEFR placement exam with two tasks on new everyday topics (vary them each time). Task 1: a short email or message (50-90 words) with a clear situation and 2-3 points to include. Task 2: an opinion or discussion essay (120-200 words) on a general social topic. JSON: {"tasks":[{"prompt":"..."},{"prompt":"..."}]}`);
  const t=(r.tasks||[]).map(x=>String(x.prompt||'')).filter(x=>x.length>20);if(t.length<2)throw{code:'api',message:'bad'};
@@ -757,15 +767,12 @@ function coreNext(){
  const sec=plan[T.sec][0];T.cur={sec};
  if(sec==='grammar'){const pool=(T.gpool||GBANK).map((g,i)=>[g,i]).filter(([g,i])=>!T.usedG.has(i));const lv=pool.filter(([g])=>g[0]===T.L);const [g,i]=(lv.length?pick(lv,1):pool.sort((a,b)=>Math.abs(a[0][0]-T.L)-Math.abs(b[0][0]-T.L)))[0];T.usedG.add(i);T.cur.q={lvl:g[0],text:g[1],opts:g[2],ans:g[3]}}
  if(sec==='vocab'){const ln=LVN[T.L];const v=pick(LV[ln].filter(x=>!T.usedV.has(x[0])&&x[2].length<40),1)[0];T.usedV.add(v[0]);const others=pick(LV[ln].filter(x=>x[0]!==v[0]&&x[2]!==v[2]),3);const o=shuffle([v,...others]);T.cur.q={lvl:T.L,text:`คำว่า “${v[0]}” แปลว่าอะไร`,opts:o.map(x=>x[2]),ans:o.indexOf(v)}}
- if(sec==='reading'||sec==='listening'){
-  const fallback=()=>{const [p]=nearest(sec==='reading'?READINGS:LISTENING,T.L,new Set());T.cur={sec,p,ans:{}};T.plays=0};
-  if(T.ai){T.cur={sec,loading:LVN[Math.max(2,T.L)]};genPassage(sec,LVN[Math.max(2,T.L)]).then(p=>{if(ctx.test!==T||T.cur.sec!==sec)return;T.cur={sec,p,ans:{}};T.plays=0}).catch(()=>{if(ctx.test===T&&T.cur.sec===sec)fallback()}).finally(()=>{if(ctx.test===T&&!T.done){view.innerHTML=coreHTML();fitCols()}})}
-  else fallback()}
+ if(sec==='reading'||sec==='listening'){const [p]=nearest(sec==='reading'?T.rp:T.lp,T.L,new Set());T.cur={sec,p,ans:{}};T.plays=0}
 }
 const coreTotal=26;
 function coreHTML(){
  const T=ctx.test,c=T.cur;const n=T.items.length;
- const top=`<div class="qhead"><span class="chip">Core Skills · ${({grammar:'Grammar',vocab:'Vocabulary',reading:'Reading',listening:'Listening'})[c.sec]}</span><span class="timer" id="tmr">${fmt(T.limit-(Date.now()-T.start))}</span></div><div class="bar"><b style="width:${Math.min(100,n/coreTotal*100)}%;background:var(--lav)"></b></div>`;
+ const top=`<div class="qhead"><button class="btn ghost" data-act="texit" style="min-height:38px;padding:4px 12px">ออกจากการสอบ</button><span class="chip">Core Skills · ${({grammar:'Grammar',vocab:'Vocabulary',reading:'Reading',listening:'Listening'})[c.sec]}</span><span class="timer" id="tmr">${fmt(T.limit-(Date.now()-T.start))}</span></div><div class="bar"><b style="width:${Math.min(100,n/coreTotal*100)}%;background:var(--lav)"></b></div>`;
  if(c.loading)return `<div class="qbox">${top}${loadingHTML('AI กำลังสร้าง'+(c.sec==='reading'?'บทอ่าน':'บทฟัง')+'ระดับ '+c.loading+' (เวลาสอบยังเดินอยู่)')}</div>`;
  if(c.q)return `<div class="qbox">${top}<div class="card" style="margin-top:12px"><p style="font-weight:800;font-size:19px">${esc(c.q.text)}</p><div class="opts">${c.q.opts.map((o,i)=>`<button class="opt" data-act="tans" data-i="${i}">${esc(o)}</button>`).join('')}</div></div><p class="small muted" style="margin-top:8px">ข้อสอบปรับความยากตามคำตอบ ตอบถูกจะยากขึ้น ตอบผิดจะง่ายลง ไม่มีการเฉลยระหว่างสอบ</p></div>`;
  const p=c.p,isL=c.sec==='listening',all=Object.keys(c.ans).length===p.qs.length;
@@ -793,15 +800,15 @@ function testHTML(){
  if(T&&T.kind==='speaking')return tsHTML();
  const R=(S.tests||{}),all=R.core&&R.writing&&R.speaking,ov=all?Math.round((R.core.score+R.writing.score+R.speaking.score)/3):null;
  const res=T&&T.kind==='result'?((T.att&&(S.attempts||[]).find(a=>a.id===T.att))||R[T.which]):null;
- return `<h1>สอบวัดระดับภาษาอังกฤษ</h1><p class="muted">ข้อสอบ 3 ส่วนแนวเดียวกับการสอบวัดระดับออนไลน์ เช่น EnglishScore ให้คะแนน 0–599 และระดับ CEFR (Pre-A1 ถึง C1) ทำทีละส่วนได้ และเก็บประวัติทุกครั้ง</p>
- <label class="row" style="gap:8px;margin-top:10px;cursor:pointer"><input type="checkbox" data-act="ttoggle" ${S.testAI!==false?'checked':''} style="width:20px;height:20px"><span><b>ให้ AI สร้างข้อสอบชุดใหม่ทุกครั้ง</b> <span class="small muted">${aiReady()?'(ไม่ซ้ำเดิม ใช้ AI ประมาณ 3–5 ครั้งต่อการสอบ)':'(ต้องตั้งค่า AI ก่อน ตอนนี้จะใช้ชุดข้อสอบในแอป)'}</span></span></label>
+ return `<h1>สอบวัดระดับภาษาอังกฤษ</h1><p class="muted">ข้อสอบ 3 ส่วนแนวเดียวกับการสอบวัดระดับออนไลน์ เช่น EnglishScore ให้คะแนน 0–599 และระดับ CEFR (Pre-A1 ถึง C1) ทำทีละส่วนได้ และเก็บประวัติทุกครั้ง กด “✨ สร้างชุดใหม่ด้วย AI” เมื่ออยากได้ข้อสอบชุดใหม่ ชุดนั้นจะถูกใช้ไปจนกว่าจะสร้างใหม่</p>
+
  ${res?`<div class="cert" style="margin:16px 0"><div class="row" style="justify-content:space-between;align-items:flex-end"><div><div class="muted small">ผลสอบ ${SKN[T.which]} · ${res.t?fmtT(res.t):esc(res.date)}${res.ai?' · ข้อสอบที่ AI สร้าง':''}</div><div class="big">${res.score}</div></div><span class="chip lv${String(res.cefr).replace('Pre-A1','A1')}" style="font-size:22px;padding:8px 18px">${esc(res.cefr)}</span></div>${scaleHTML(res.score)}
   ${res.brk?`<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));margin-top:14px">${res.brk.map(b=>`<div class="skill"><b>${BRKN[b.k]||esc(b.k)}</b><div style="font:700 24px Fredoka">${b.score} <span class="chip">${band(b.score)}</span></div><div class="small muted">ตอบถูก ${b.acc}%</div></div>`).join('')}</div>`:''}
   ${res.crit?`<div class="grid g2" style="margin-top:14px">${Object.entries(res.crit).map(([k,v])=>`<div><div class="small">${({task_achievement:'ตอบตรงโจทย์',coherence:'การเรียบเรียง',vocabulary:'คำศัพท์',grammar:'ไวยากรณ์',fluency:'ความคล่อง',pronunciation:'การออกเสียง (จากการอ่าน)'})[k]||esc(k)} <b>${esc(v)}/10</b></div><div class="bar"><b style="width:${(+v||0)*10}%;background:var(--lav)"></b></div></div>`).join('')}</div>`:''}
   ${res.fb?`<p style="margin-top:12px">${esc(res.fb)}</p>`:''}${(res.imp||[]).length?`<ul>${res.imp.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:''}
   ${reviewHTML(res)}
   <p class="small muted" style="margin-top:10px">คะแนนนี้เป็นการประเมินโดยประมาณสำหรับฝึกซ้อม ไม่ใช่ผลสอบหรือใบรับรองทางการ</p></div>`:''}
- <div class="grid g3" style="margin-top:16px">${[['core','Core Skills','Grammar · Vocabulary · Reading · Listening แบบปรับความยากตามคำตอบ 26 ข้อ จำกัดเวลา 30 นาที','lav'],['writing','Writing','2 งานเขียน: อีเมล และเรียงความแสดงความคิดเห็น AI ให้คะแนนตามเกณฑ์','peach'],['speaking','Speaking','อ่านออกเสียง 2 ประโยค และพูดตอบคำถาม 3 ข้อ AI ประเมินจากคำพูด','berry']].map(([k,t,dsc,c])=>`<div class="tile"><span class="t">${t}</span><span class="muted small">${dsc}</span>${R[k]?`<div class="row"><b style="font:700 26px Fredoka">${R[k].score}</b><span class="chip">${esc(R[k].cefr)}</span><span class="small muted">${esc(R[k].date)}</span></div>`:'<span class="small muted">ยังไม่เคยสอบ</span>'}<div class="row"><button class="btn ${c}" data-act="tstart" data-k="${k}">${R[k]?'สอบใหม่':'เริ่มสอบ'}</button>${R[k]?`<button class="btn ghost" data-act="tview" data-k="${k}">ผลล่าสุด</button>`:''}</div></div>`).join('')}</div>
+ <div class="grid g3" style="margin-top:16px">${[['core','Core Skills','Grammar · Vocabulary · Reading · Listening แบบปรับความยากตามคำตอบ 26 ข้อ จำกัดเวลา 30 นาที','lav'],['writing','Writing','2 งานเขียน: อีเมล และเรียงความแสดงความคิดเห็น AI ให้คะแนนตามเกณฑ์','peach'],['speaking','Speaking','อ่านออกเสียง 2 ประโยค และพูดตอบคำถาม 3 ข้อ AI ประเมินจากคำพูด','berry']].map(([k,t,dsc,c])=>`<div class="tile"><span class="t">${t}</span><span class="muted small">${dsc}</span>${R[k]?`<div class="row"><b style="font:700 26px Fredoka">${R[k].score}</b><span class="chip">${esc(R[k].cefr)}</span><span class="small muted">${esc(R[k].date)}</span></div>`:'<span class="small muted">ยังไม่เคยสอบ</span>'}${(()=>{const st=(S.sets||{})[k];return `<div class="small" style="background:var(--line);border-radius:12px;padding:6px 10px">ชุดข้อสอบ: ${st?'<b>จาก AI</b> · สร้างเมื่อ '+esc(fmtT(st.t))+` <button class="btn ghost" data-act="treset" data-k="${k}" style="min-height:30px;padding:2px 8px;font-size:12px">ใช้ชุดในแอป</button>`:'<b>ชุดในแอป</b>'}</div>`})()}<div class="row"><button class="btn ${c}" data-act="tstart" data-k="${k}" ${ctx.gen?'disabled':''}>${R[k]?'สอบใหม่':'เริ่มสอบ'}</button><button class="btn ghost" data-act="tgen" data-k="${k}" ${ctx.gen?'disabled':''}>${ctx.gen===k?'<span class="spin"></span> กำลังสร้าง…':'✨ สร้างชุดใหม่ด้วย AI'}</button>${R[k]?`<button class="btn ghost" data-act="tview" data-k="${k}">ผลล่าสุด</button>`:''}</div></div>`).join('')}</div>
  <div class="card" style="margin-top:16px">${all?`<div class="row" style="justify-content:space-between"><div><h2>คะแนนรวม</h2><p class="muted small">เฉลี่ยจาก Core Skills, Writing และ Speaking</p></div><div class="row"><span class="big" style="font-size:56px">${ov}</span><span class="chip" style="font-size:20px;padding:8px 16px">${band(ov)}</span></div></div>${scaleHTML(ov)}`:`<h3>คะแนนรวม</h3><p class="muted small">สอบให้ครบทั้ง 3 ส่วนเพื่อดูคะแนนรวมและระดับ CEFR โดยรวม</p>`}
  </div>${histHTML()}
  ${!aiReady()?aiNote():''}`;
@@ -941,22 +948,25 @@ document.addEventListener('click',async e=>{
    ctx.li={level:lv,title:r.title,lines:(r.lines||[]).map(l=>[['A','B','N'].includes(l.speaker)?l.speaker:'N',String(l.text||'')]),qs:(r.questions||[]).map(q=>[q.q,q.options,q.answer])};ctx.lq=null;render();scrollTo(0,0)}catch(err){st.textContent=' '+aiErr(err)}return}
  if(a==='dnext'){ctx.ds=pick(DSENT,1)[0];render();return}
  if(a==='dcheck'){const r=cmpWords(ctx.ds,$('#dtext').value);bump(2);$('#dout').innerHTML=`<div class="score" style="font-size:40px">${r.pct}%</div><div class="tw" style="font:700 19px/1.6 Fredoka">${ctx.ds.split(' ').map((w,i)=>`<span class="${r.hit[i]?'hit':'miss'}">${esc(w)}</span>`).join(' ')}</div>`;speak(ctx.ds);return}
- if(a==='tstart'){clearInterval(TICK);const k=d.k,ai=useAItest(),T0={start:Date.now()};
+ if(a==='tstart'){clearInterval(TICK);const k=d.k,set=(S.sets||{})[k];
   const go=()=>{view.innerHTML=testHTML();testAfter();scrollTo(0,0)};
-  if(k==='core'){const T={kind:'core',L:3,items:[],log:[],sec:0,cnt:0,limit:30*60e3,usedG:new Set(),usedV:new Set(),plays:0,ai,gpool:GBANK};
-   const begin=()=>{T.start=Date.now();ctx.test=T;coreNext();view.innerHTML=testHTML();testAfter();scrollTo(0,0)};
-   if(ai){ctx.test={kind:'loading'};view.innerHTML=loadingHTML('AI กำลังสร้างข้อสอบ Core Skills ชุดใหม่…');genGrammar().then(p=>{T.gpool=p}).catch(err=>{T.ai=false;toast('สร้างข้อสอบด้วย AI ไม่สำเร็จ ใช้ชุดข้อสอบในแอปแทน')}).finally(()=>{if(ctx.test&&ctx.test.kind==='loading')begin()})}else begin();return}
+  if(k==='core'){ctx.test={kind:'core',L:3,items:[],log:[],sec:0,cnt:0,start:Date.now(),limit:30*60e3,usedG:new Set(),usedV:new Set(),plays:0,ai:!!set,gpool:set&&set.gpool||GBANK,rp:set&&set.readings&&set.readings.length?set.readings:READINGS,lp:set&&set.listening&&set.listening.length?set.listening:LISTENING};coreNext();go();return}
   if(k==='writing'){const dr=store.get(pk('twdraft2'),null);
    if(dr&&dr.tasks&&dr.texts.some(x=>x.trim())){ctx.test={kind:'writing',start:Date.now(),tasks:dr.tasks,texts:dr.texts,ai:dr.ai};toast('เปิดงานเขียนที่ร่างค้างไว้ให้');go();return}
-   if(ai){ctx.test={kind:'loading'};view.innerHTML=loadingHTML('AI กำลังสร้างโจทย์ Writing ชุดใหม่…');genWriting().then(t=>({t,ai:true})).catch(()=>({t:TEST_WRITING,ai:false})).then(({t,ai:x})=>{if(!ctx.test||ctx.test.kind!=='loading')return;ctx.test={kind:'writing',start:Date.now(),tasks:t,texts:['',''],ai:x};go()});return}
-   ctx.test={kind:'writing',start:Date.now(),tasks:TEST_WRITING,texts:['',''],ai:false};go();return}
-  if(k==='speaking'){const mk=(sp,x)=>({kind:'speaking',start:Date.now(),stepStart:Date.now(),step:0,ans:[],sp,ai:x});
-   if(ai){ctx.test={kind:'loading'};view.innerHTML=loadingHTML('AI กำลังสร้างโจทย์ Speaking ชุดใหม่…');genSpeaking().then(sp=>mk(sp,true)).catch(()=>mk(TEST_SPEAKING,false)).then(T=>{if(!ctx.test||ctx.test.kind!=='loading')return;ctx.test=T;go()});return}
-   ctx.test=mk(TEST_SPEAKING,false);go();return}
+   ctx.test={kind:'writing',start:Date.now(),tasks:set&&set.tasks||TEST_WRITING,texts:['',''],ai:!!set};go();return}
+  if(k==='speaking'){ctx.test={kind:'speaking',start:Date.now(),stepStart:Date.now(),step:0,ans:[],sp:set&&set.sp||TEST_SPEAKING,ai:!!set};go();return}
   return}
+ if(a==='tgen'){const k=d.k;if(!aiReady()){toast('ตั้งค่า AI ก่อน ที่หน้า “ตั้งค่า AI”');return}if(ctx.gen)return;ctx.gen=k;view.innerHTML=testHTML();
+  try{let set;
+   if(k==='core'){const gpool=await genGrammar();const rd=await genPassages('reading').catch(()=>[]);const ls=await genPassages('listening').catch(()=>[]);set={gpool,readings:rd,listening:ls}}
+   if(k==='writing')set={tasks:await genWriting()};
+   if(k==='speaking')set={sp:await genSpeaking()};
+   set.t=Date.now();S.sets=Object.assign({},S.sets,{[k]:set});if(k==='writing')store.set(pk('twdraft2'),null);save();toast('สร้างข้อสอบ '+SKN[k]+' ชุดใหม่แล้ว กดเริ่มสอบได้เลย',3500)}
+  catch(err){toast(esc(aiErr(err)),4000)}
+  ctx.gen=null;if(location.hash==='#test'&&(!ctx.test||ctx.test.kind==='result'))view.innerHTML=testHTML();return}
+ if(a==='treset'){if(S.sets){delete S.sets[d.k];save()}if(d.k==='writing')store.set(pk('twdraft2'),null);view.innerHTML=testHTML();toast('กลับไปใช้ชุดข้อสอบในแอปแล้ว');return}
  if(a==='tatt'){const at=(S.attempts||[]).find(x=>x.id===d.id);if(!at)return;ctx.test={kind:'result',which:at.k,att:at.id};view.innerHTML=testHTML();scrollTo(0,0);return}
  if(a==='hfilter'){ctx.hf=d.f;const y=scrollY;view.innerHTML=testHTML();scrollTo(0,y);return}
- if(a==='ttoggle'){S.testAI=b.checked;save();return}
  if(a==='tview'){ctx.test={kind:'result',which:d.k,att:(S.tests&&S.tests[d.k]&&S.tests[d.k].id)||null};view.innerHTML=testHTML();scrollTo(0,0);return}
  if(a==='texit'){clearInterval(TICK);if(micOn&&DICT)DICT.stop().catch(()=>{});ctx.test=null;view.innerHTML=testHTML();return}
  if(a==='tans'){const T=ctx.test,q=T.cur.q;const ok=+d.i===q.ans;T.items.push([q.lvl,ok,T.cur.sec]);T.log.push({s:T.cur.sec,l:q.lvl,q:q.text,o:q.opts,a:q.ans,p:+d.i});T.L=Math.max(1,Math.min(5,T.L+(ok?1:-1)));T.cnt++;coreNext();if(!T.done){view.innerHTML=coreHTML();fitCols()}return}
